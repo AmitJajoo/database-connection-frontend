@@ -1,4 +1,7 @@
 /* App.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
   --primary: #1e3a8a;
