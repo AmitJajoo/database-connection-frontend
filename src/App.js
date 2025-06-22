@@ -1,47 +1,73 @@
-// ✅ New: Click on collection to populate automatically
-
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import {
-  AppBar, Toolbar, Typography, Container, CssBaseline, Paper, TextField, Button, List,
-  ListItem, ListItemText, Switch, FormControlLabel, Box, Table, TableBody,
-  TableCell, TableContainer, TableHead, TableRow, InputAdornment, IconButton, Drawer,
-  Collapse, Tooltip
+  AppBar, Toolbar, Typography, Container, CssBaseline, Paper, TextField, Button,
+  List, ListItem, ListItemText, Switch, FormControlLabel, Box, Table, TableBody,
+  TableCell, TableContainer, TableHead, TableRow, InputAdornment, IconButton,
+  Drawer, Collapse, Tooltip, TableSortLabel,  Modal, Tabs, Tab, Divider
 } from "@mui/material";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
 import SearchIcon from '@mui/icons-material/Search';
 import MenuIcon from '@mui/icons-material/Menu';
 import AddIcon from '@mui/icons-material/Add';
 import CloseIcon from '@mui/icons-material/Close';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import HistoryIcon from '@mui/icons-material/History';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
 export default function App() {
-  const [config, setConfig] = useState({
-    type: "sql", url: "", username: "", password: "", database: "", collection: ""
-  });
+  const [config, setConfig] = useState({ type: "sql", url: "", username: "", password: "", database: "", collection: "" });
   const [connected, setConnected] = useState(false);
   const [tables, setTables] = useState([]);
   const [filteredTables, setFilteredTables] = useState([]);
   const [tableSearch, setTableSearch] = useState("");
-  const [query, setQuery] = useState("{}");
+  const [query, setQuery] = useState("");
   const [queryResult, setQueryResult] = useState([]);
   const [error, setError] = useState("");
   const [prompt, setPrompt] = useState("");
   const [darkMode, setDarkMode] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showConnectForm, setShowConnectForm] = useState(true);
+  const [filters, setFilters] = useState({});
+  const [sortConfig, setSortConfig] = useState({ key: '', direction: 'asc' });
+  const [schemaModalOpen, setSchemaModalOpen] = useState(false);
+  const [selectedTable, setSelectedTable] = useState("");
+  const [schema, setSchema] = useState([]);
+  const [queryHistory, setQueryHistory] = useState([]);
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [tabIndex, setTabIndex] = useState(0);
+
+  useEffect(() => {
+  const savedConfig = localStorage.getItem("dbConfig");
+  if (savedConfig) {
+    const parsed = JSON.parse(savedConfig);
+    setConfig(parsed);
+    setConnected(true);
+
+    // inline fetchTables here
+    axios.post("http://localhost:8080/api/tables", parsed)
+      .then(res => {
+        setTables(res.data);
+        setFilteredTables(res.data);
+      })
+      .catch(() => setError("Failed to fetch tables"));
+  }
+
+  const history = localStorage.getItem("queryHistory");
+  if (history) setQueryHistory(JSON.parse(history));
+}, []);
+
 
   const theme = createTheme({
     palette: {
       mode: darkMode ? "dark" : "light",
-      ...(darkMode
-        ? {}
-        : {
-            background: { default: "#f9fafb", paper: "#ffffff" },
-            primary: { main: "#0d9488" },
-            secondary: { main: "#6366f1" },
-            text: { primary: "#1f2937", secondary: "#4b5563" },
-            divider: "#e5e7eb"
-          })
+      ...(darkMode ? {} : {
+        background: { default: "#f9fafb", paper: "#ffffff" },
+        primary: { main: "#0d9488" },
+        secondary: { main: "#6366f1" },
+        text: { primary: "#1f2937", secondary: "#4b5563" },
+        divider: "#e5e7eb"
+      })
     },
     typography: {
       fontFamily: "'Inter', 'Roboto', 'Helvetica', 'Arial', sans-serif",
@@ -62,20 +88,26 @@ export default function App() {
     setConfig({ ...config, [e.target.name]: e.target.value });
   };
 
+  const formatTimestamp = (ts) => {
+    return new Date(ts).toLocaleString();
+  };
+
   const connectDB = async () => {
     try {
       await axios.post("http://localhost:8080/api/connect", config);
+      localStorage.setItem("dbConfig", JSON.stringify(config));
       setConnected(true);
       setShowConnectForm(false);
       fetchTables();
+      setQuery(config.type === "mongo" ? "{}" : "");
     } catch (err) {
       setError(err.response?.data?.error || "Connection Failed");
     }
   };
 
-  const fetchTables = async () => {
+  const fetchTables = async (cfg = config) => {
     try {
-      const res = await axios.post("http://localhost:8080/api/tables", config);
+      const res = await axios.post("http://localhost:8080/api/tables", cfg);
       setTables(res.data);
       setFilteredTables(res.data);
     } catch (err) {
@@ -86,142 +118,163 @@ export default function App() {
   const handleTableSearch = (e) => {
     const value = e.target.value;
     setTableSearch(value);
-    const filtered = tables.filter((table) => table.toLowerCase().includes(value.toLowerCase()));
-    setFilteredTables(filtered);
+    setFilteredTables(tables.filter((t) => t.toLowerCase().includes(value.toLowerCase())));
   };
 
-  const handleTableClick = (tableName) => {
-    setConfig((prev) => ({ ...prev, collection: tableName }));
+  const handleTableClick = async (table) => {
+    setConfig(prev => ({ ...prev, collection: table }));
+    setSelectedTable(table);
+    try {
+      const payload = {
+        type: config.type,
+        url: config.url,
+        username: config.username,
+        password: config.password,
+        database: config.database,
+        table,
+        collection: table,
+      };
+      const res = await axios.post("http://localhost:8080/api/schema", payload);
+      setSchema(res.data);
+      setSchemaModalOpen(true);
+    } catch (err) {
+      console.error("Failed to fetch schema", err);
+    }
+  };
+
+  const addToHistory = (q) => {
+    const entry = {
+      query: q,
+      type: config.type.toUpperCase(),
+      timestamp: new Date().toISOString(),
+      collection: config.collection || "N/A"
+    };
+    const updated = [entry, ...queryHistory].slice(0, 20);
+    setQueryHistory(updated);
+    localStorage.setItem("queryHistory", JSON.stringify(updated));
+  };
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
   };
 
   const executeQuery = async () => {
     try {
-      const payload = config.type === "mongo"
-        ? {
-            type: "mongo",
-            url: config.url,
-            database: config.database,
-            query: `${config.collection}:::${query.trim()}`
-          }
-        : {
-            type: "sql",
-            url: config.url,
-            username: config.username,
-            password: config.password,
-            query: query
-          };
-      console.log("Sending query payload:", payload);
+      const payload = config.type === "mongo" ? {
+        type: "mongo",
+        url: config.url,
+        database: config.database,
+        query: `${config.collection}:::${query.trim()}`
+      } : {
+        type: "sql",
+        url: config.url,
+        username: config.username,
+        password: config.password,
+        query: query
+      };
       const res = await axios.post("http://localhost:8080/api/query", payload);
       setQueryResult(res.data);
+      addToHistory(query);
       setError("");
     } catch (err) {
       setError(err.response?.data?.error || "Query Execution Failed");
     }
   };
 
-  const generateQueryFromPrompt = async () => {
-    try {
-      const res = await axios.post("http://localhost:8080/api/ai-sql", prompt, {
-        headers: { "Content-Type": "text/plain" },
-      });
-      setQuery(res.data.query);
-    } catch (err) {
-      setError("Failed to generate query");
-    }
+  const handleFilterChange = (col, value) => {
+    setFilters({ ...filters, [col]: value });
   };
+
+  const handleSort = (col) => {
+    const isAsc = sortConfig.key === col && sortConfig.direction === 'asc';
+    setSortConfig({ key: col, direction: isAsc ? 'desc' : 'asc' });
+  };
+
+  const filteredData = queryResult
+    .filter(row => Object.entries(filters).every(([key, value]) => String(row[key] || '').toLowerCase().includes(value.toLowerCase())))
+    .sort((a, b) => {
+      if (!sortConfig.key) return 0;
+      const aVal = a[sortConfig.key];
+      const bVal = b[sortConfig.key];
+      return sortConfig.direction === 'asc'
+        ? String(aVal).localeCompare(String(bVal))
+        : String(bVal).localeCompare(String(aVal));
+    });
+
+  const exportCSV = () => {
+    const headers = Object.keys(queryResult[0] || {});
+    const csv = [headers.join(","), ...filteredData.map(row => headers.map(h => JSON.stringify(row[h] || "")).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "query_result.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AppBar position="static">
-        <Toolbar>
-          <IconButton color="inherit" edge="start" onClick={() => setDrawerOpen(true)}>
-            <MenuIcon />
-          </IconButton>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            🛠️ Database Query Tool
-          </Typography>
-          <FormControlLabel
-            control={<Switch checked={darkMode} onChange={() => setDarkMode(!darkMode)} />}
-            label="Dark Mode"
-          />
-        </Toolbar>
-      </AppBar>
+              <Toolbar>
+                <IconButton color="inherit" edge="start" onClick={() => setDrawerOpen(true)}>
+                  <MenuIcon />
+                </IconButton>
+                <Typography variant="h6" sx={{ flexGrow: 1 }}>🛠️ DB Tool</Typography>
+                <Tooltip title="View History">
+                  <IconButton color="inherit" onClick={() => setHistoryDrawerOpen(true)}>
+                    <HistoryIcon />
+                  </IconButton>
+                </Tooltip>
+                <FormControlLabel control={<Switch checked={darkMode} onChange={() => setDarkMode(!darkMode)} />} label="Dark Mode" />
+              </Toolbar>
+            </AppBar>
 
       <Drawer anchor="left" open={drawerOpen} onClose={() => setDrawerOpen(false)}>
         <Box sx={{ width: 300, p: 2 }}>
-          <Box display="flex" justifyContent="space-between" alignItems="center">
+          <Box display="flex" justifyContent="space-between">
             <Typography variant="h6">Database</Typography>
             <Box>
-              <Tooltip title="Add/Connect DB">
-                <IconButton onClick={() => setShowConnectForm(!showConnectForm)}>
-                  <AddIcon />
-                </IconButton>
+              <Tooltip title="Connect DB">
+                <IconButton onClick={() => setShowConnectForm(!showConnectForm)}><AddIcon /></IconButton>
               </Tooltip>
               <Tooltip title="Close">
-                <IconButton onClick={() => setDrawerOpen(false)}>
-                  <CloseIcon />
-                </IconButton>
+                <IconButton onClick={() => setDrawerOpen(false)}><CloseIcon /></IconButton>
               </Tooltip>
             </Box>
           </Box>
-
           <Collapse in={showConnectForm}>
             <FormControlLabel
-              control={
-                <Switch
-                  checked={config.type === "mongo"}
-                  onChange={(e) => setConfig({ ...config, type: e.target.checked ? "mongo" : "sql" })}
-                />
-              }
+              control={<Switch checked={config.type === "mongo"} onChange={(e) => setConfig({ ...config, type: e.target.checked ? "mongo" : "sql" })} />}
               label={config.type === "mongo" ? "MongoDB" : "SQL DB"}
             />
-
             {config.type === "mongo" ? (
               <>
-                <TextField label="MongoDB URI" name="url" fullWidth margin="dense" value={config.url} onChange={handleChange} />
-                <TextField label="Database Name" name="database" fullWidth margin="dense" value={config.database} onChange={handleChange} />
+                <TextField label="Mongo URI" name="url" fullWidth margin="dense" value={config.url} onChange={handleChange} />
+                <TextField label="Database" name="database" fullWidth margin="dense" value={config.database} onChange={handleChange} />
               </>
             ) : (
               <>
-                <TextField label="Database URL" name="url" fullWidth margin="dense" value={config.url} onChange={handleChange} />
+                <TextField label="DB URL" name="url" fullWidth margin="dense" value={config.url} onChange={handleChange} />
                 <TextField label="Username" name="username" fullWidth margin="dense" value={config.username} onChange={handleChange} />
                 <TextField label="Password" type="password" name="password" fullWidth margin="dense" value={config.password} onChange={handleChange} />
               </>
             )}
-
-            <Button fullWidth variant="contained" sx={{ mt: 1 }} onClick={connectDB}>
-              {connected ? "Reconnect" : "Connect"}
-            </Button>
+            <Button fullWidth variant="contained" sx={{ mt: 1 }} onClick={connectDB}>{connected ? "Reconnect" : "Connect"}</Button>
             {error && <Typography color="error" mt={2}>{error}</Typography>}
           </Collapse>
 
           {connected && (
             <Box mt={3}>
               <Typography variant="h6">Tables / Collections</Typography>
-              <TextField
-                placeholder="Search..."
-                value={tableSearch}
-                onChange={handleTableSearch}
-                fullWidth
-                size="small"
-                margin="dense"
-                InputProps={{
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <IconButton disabled>
-                        <SearchIcon />
-                      </IconButton>
-                    </InputAdornment>
-                  )
-                }}
-              />
+              <TextField placeholder="Search..." value={tableSearch} onChange={handleTableSearch} fullWidth size="small" margin="dense"
+                InputProps={{ endAdornment: <InputAdornment position="end"><SearchIcon /></InputAdornment> }} />
               <Paper sx={{ maxHeight: 300, overflowY: 'auto', mt: 1 }}>
                 <List dense>
-                  {filteredTables.map((table, index) => (
-                    <ListItem key={index} button onClick={() => handleTableClick(table)}>
-                      <ListItemText primary={table} />
-                    </ListItem>
+                  {filteredTables.map((t, i) => (
+                    <ListItem key={i} button onClick={() => handleTableClick(t)}><ListItemText primary={t} /></ListItem>
                   ))}
                 </List>
               </Paper>
@@ -230,57 +283,83 @@ export default function App() {
         </Box>
       </Drawer>
 
+      <Drawer anchor="right" open={historyDrawerOpen} onClose={() => setHistoryDrawerOpen(false)}>
+              <Box sx={{ width: 400, p: 2 }}>
+                <Typography variant="h6" gutterBottom>Query History</Typography>
+                <Tabs value={tabIndex} onChange={(_, newIndex) => setTabIndex(newIndex)}>
+                  <Tab label="History" />
+                </Tabs>
+                <Divider sx={{ my: 1 }} />
+                {tabIndex === 0 && (
+                  <List dense>
+                    {queryHistory.map((entry, i) => (
+                      <ListItem key={i} alignItems="flex-start" secondaryAction={
+                        <Tooltip title="Copy">
+                          <IconButton onClick={() => copyToClipboard(entry.query)}><ContentCopyIcon fontSize="small" /></IconButton>
+                        </Tooltip>
+                      }>
+                        <ListItemText
+                          primary={<Typography sx={{ whiteSpace: 'pre-wrap' }}>{entry.query}</Typography>}
+                          secondary={<Typography variant="caption">{`${entry.type} | ${entry.collection || "N/A"} | ${formatTimestamp(entry.timestamp)}`}</Typography>}
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                )}
+              </Box>
+            </Drawer>
+
       <Container maxWidth="xl" sx={{ py: 3 }}>
         <Paper sx={{ p: 3, borderRadius: 3 }}>
           <Typography variant="h6">Query Playground</Typography>
-
-          {!connected && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Please connect to a database to begin using the query tools.
-            </Typography>
-          )}
-
+          {!connected && <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Please connect to a database first.</Typography>}
           {connected && (
             <Box>
+              <TextField fullWidth label="Ask AI..." value={prompt} onChange={(e) => setPrompt(e.target.value)} margin="dense" />
+              <Button variant="outlined" onClick={() => { }} sx={{ mb: 2 }}>Generate</Button>
               <TextField
-                fullWidth
-                label="Ask AI to generate Query..."
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                margin="dense"
-              />
-              <Button variant="outlined" onClick={generateQueryFromPrompt} sx={{ mb: 2 }}>
-                Generate
-              </Button>
-              <TextField
-                fullWidth
-                multiline
-                rows={4}
+                fullWidth multiline rows={4}
                 label={config.type === "mongo" ? `Filter for ${config.collection}` : "SQL Query"}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 margin="normal"
               />
               <Button variant="contained" onClick={executeQuery}>Execute</Button>
-
               {queryResult.length > 0 && (
                 <Box mt={4}>
-                  <Typography variant="h6">Query Result</Typography>
+                  <Box display="flex" justifyContent="space-between" alignItems="center">
+                    <Typography variant="h6">Query Result</Typography>
+                    <Button variant="outlined" startIcon={<FileDownloadIcon />} onClick={exportCSV}>Export CSV</Button>
+                  </Box>
                   <TableContainer component={Paper} sx={{ mt: 2 }}>
                     <Table size="small">
                       <TableHead>
                         <TableRow>
                           {Object.keys(queryResult[0]).map((col) => (
-                            <TableCell key={col}>{col}</TableCell>
+                            <TableCell key={col}>
+                              <TableSortLabel
+                                active={sortConfig.key === col}
+                                direction={sortConfig.direction}
+                                onClick={() => handleSort(col)}
+                              >
+                                {col}
+                              </TableSortLabel>
+                              <TextField
+                                size="small"
+                                margin="dense"
+                                placeholder="Filter"
+                                value={filters[col] || ''}
+                                onChange={(e) => handleFilterChange(col, e.target.value)}
+                                fullWidth
+                              />
+                            </TableCell>
                           ))}
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {queryResult.map((row, i) => (
+                        {filteredData.map((row, i) => (
                           <TableRow key={i}>
-                            {Object.values(row).map((val, j) => (
-                              <TableCell key={j}>{String(val)}</TableCell>
-                            ))}
+                            {Object.values(row).map((val, j) => <TableCell key={j}>{String(val)}</TableCell>)}
                           </TableRow>
                         ))}
                       </TableBody>
@@ -288,12 +367,40 @@ export default function App() {
                   </TableContainer>
                 </Box>
               )}
-
               {error && <Typography color="error" mt={2}>{error}</Typography>}
             </Box>
           )}
         </Paper>
       </Container>
+
+      <Modal open={schemaModalOpen} onClose={() => setSchemaModalOpen(false)}>
+              <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 500, bgcolor: 'background.paper', boxShadow: 24, p: 4, borderRadius: 2 }}>
+                <Typography variant="h6" mb={2}>
+                    {config.type === "mongo" ? `Fields in ${selectedTable}` : `Columns in ${selectedTable}`}
+                </Typography>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Name</TableCell>
+                        <TableCell>Type</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {schema.map((field, i) => (
+                        <TableRow key={i}>
+                          <TableCell>{field.name}</TableCell>
+                          <TableCell>{field.type}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+                <Box mt={2} textAlign="right">
+                  <Button onClick={() => setSchemaModalOpen(false)}>Close</Button>
+                </Box>
+              </Box>
+            </Modal>
     </ThemeProvider>
   );
 }
