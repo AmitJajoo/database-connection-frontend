@@ -435,6 +435,55 @@ export default function App() {
   </Box>
 </Modal>
 
+{/* Schema Modal */}
+<Modal open={schemaModalOpen} onClose={() => setSchemaModalOpen(false)}>
+  <Box sx={{
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    width: '90%',
+    maxWidth: 600,
+    bgcolor: 'background.paper',
+    boxShadow: 24,
+    p: 4,
+    borderRadius: 3,
+    maxHeight: '80vh',
+    overflowY: 'auto'
+  }}>
+    <Typography variant="h6" mb={2}>Schema for: <strong>{selectedTable}</strong></Typography>
+
+    {schema && Object.keys(schema).length > 0 ? (
+      <TableContainer component={Paper}>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell><strong>Field</strong></TableCell>
+              <TableCell><strong>Type</strong></TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+  {schema.map((field, index) => (
+    <TableRow key={index}>
+      <TableCell>{field.name}</TableCell>
+      <TableCell>{field.type}</TableCell>
+    </TableRow>
+  ))}
+</TableBody>
+
+        </Table>
+      </TableContainer>
+    ) : (
+      <Typography>No schema data available.</Typography>
+    )}
+
+    <Box mt={2} textAlign="right">
+      <Button onClick={() => setSchemaModalOpen(false)} variant="outlined">Close</Button>
+    </Box>
+  </Box>
+</Modal>
+
+
 
     </ThemeProvider>
   );
